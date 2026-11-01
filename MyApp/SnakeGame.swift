@@ -238,8 +238,9 @@ final class SnakeGame: ObservableObject {
         stopLoop()
         loopTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self else { return }
-                let interval = self.tickInterval
+                // 每轮只做一次弱引用解包，后续直接使用局部常量
+                guard let game = self else { return }
+                let interval = game.tickInterval
 
                 do {
                     try await Task.sleep(for: .seconds(interval))
@@ -247,9 +248,9 @@ final class SnakeGame: ObservableObject {
                     return
                 }
 
-                guard let self else { return }
-                guard self.state == .running else { return }
-                self.step()
+                guard !Task.isCancelled else { return }
+                guard game.state == .running else { return }
+                game.step()
             }
         }
     }
