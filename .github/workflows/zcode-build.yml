@@ -4,27 +4,46 @@ on:
     inputs:
       scheme: { description: "Scheme", required: true }
       configuration: { description: "Configuration", required: true, default: "Debug" }
+      commit_sha: { description: "Exact project commit", required: false, default: "" }
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
         with:
-          path: ~/Library/Developer/Xcode/DerivedData
-          key: ${{ runner.os }}-derived-${{ hashFiles('**/Package.resolved') }}
-      - name: Build and test
+          ref: ${{ inputs.commit_sha || github.sha }}
+      - name: Generate Xcode project when using project.yml
+        run: |
+          if [ -f project.yml ]; then
+            if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
+            xcodegen generate --spec project.yml
+          fi
+      - name: Build unsigned app
+        env:
+          ZCODE_SCHEME: ${{ inputs.scheme }}
+          ZCODE_CONFIGURATION: ${{ inputs.configuration }}
         run: |
           set -o pipefail
-          CONTAINER=$(find . -maxdepth 3 \( -name '*.xcworkspace' -o -name '*.xcodeproj' \) | head -1)
-          if [[ "$CONTAINER" == *.xcworkspace ]]; then FLAG=-workspace; else FLAG=-project; fi
-          xcodebuild "$FLAG" "$CONTAINER" -scheme "${{ inputs.scheme }}" -configuration "${{ inputs.configuration }}" -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO clean build | tee build.log
+          CONTAINER=$(find . -maxdepth 3 -type d -name '*.xcworkspace' -not -path '*.xcodeproj/*' -not -path './Pods/*' -print -quit)
+          if [ -n "$CONTAINER" ]; then
+            FLAG=-workspace
+          else
+            CONTAINER=$(find . -maxdepth 3 -type d -name '*.xcodeproj' -not -path './Pods/*' -print -quit)
+            FLAG=-project
+          fi
+          if [ -z "$CONTAINER" ]; then echo 'No Xcode project found; include project.yml or an Xcode project.'; exit 1; fi
+          xcodebuild "$FLAG" "$CONTAINER" -scheme "$ZCODE_SCHEME" -configuration "$ZCODE_CONFIGURATION" -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/ZcodeBuild" CODE_SIGNING_ALLOWED=NO clean build | tee build.log
       - name: Package unsigned IPA
         if: success()
         run: |
-          APP=$(find ~/Library/Developer/Xcode/DerivedData -path '*Build/Products/*-iphoneos/*.app' | head -1)
-          mkdir -p Payload && cp -R "$APP" Payload/
-          ditto -c -k --sequesterRsrc --keepParent Payload Zcode-unsigned.ipa
+          APP=$(find "$RUNNER_TEMP/ZcodeBuild/Build/Products" -maxdepth 2 -type d -name '*.app' -print -quit)
+          test -n "$APP"
+          mkdir -p "$RUNNER_TEMP/ZcodePackage/Payload"
+          ditto "$APP" "$RUNNER_TEMP/ZcodePackage/Payload/$(basename "$APP")"
+          cd "$RUNNER_TEMP/ZcodePackage"
+          zip -qry "$GITHUB_WORKSPACE/Zcode-unsigned.ipa" Payload
       - uses: actions/upload-artifact@v4
         if: always()
         with:

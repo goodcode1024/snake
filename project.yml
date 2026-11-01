@@ -1,0 +1,13 @@
+name: MyApp
+options:
+  deploymentTarget: { iOS: "18.0" }
+targets:
+  MyApp:
+    type: application
+    platform: iOS
+    sources: [MyApp]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.myapp
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
