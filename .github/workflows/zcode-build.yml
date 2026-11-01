@@ -1,0 +1,35 @@
+name: Zcode Build
+on:
+  workflow_dispatch:
+    inputs:
+      scheme: { description: "Scheme", required: true }
+      configuration: { description: "Configuration", required: true, default: "Debug" }
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-derived-${{ hashFiles('**/Package.resolved') }}
+      - name: Build and test
+        run: |
+          set -o pipefail
+          CONTAINER=$(find . -maxdepth 3 \( -name '*.xcworkspace' -o -name '*.xcodeproj' \) | head -1)
+          if [[ "$CONTAINER" == *.xcworkspace ]]; then FLAG=-workspace; else FLAG=-project; fi
+          xcodebuild "$FLAG" "$CONTAINER" -scheme "${{ inputs.scheme }}" -configuration "${{ inputs.configuration }}" -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO clean build | tee build.log
+      - name: Package unsigned IPA
+        if: success()
+        run: |
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -path '*Build/Products/*-iphoneos/*.app' | head -1)
+          mkdir -p Payload && cp -R "$APP" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload Zcode-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zcode-build
+          path: |
+            Zcode-unsigned.ipa
+            build.log
+          if-no-files-found: ignore
